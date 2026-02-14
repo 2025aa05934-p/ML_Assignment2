@@ -167,9 +167,8 @@ st.markdown("""
 
     /* Force light text for sidebar labels and descriptions */
     [data-testid="stSidebar"] p, [data-testid="stSidebar"] span, [data-testid="stSidebar"] label, [data-testid="stSidebar"] .stMarkdown {
-        color: #334155 !important;
+        color: #cbd5e1 !important;
     }
-            
     
     [data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3 {
         color: #ffffff !important;
@@ -396,6 +395,23 @@ with st.sidebar:
             type=['csv'],
             help="Upload a CSV file with features and target variable"
         )
+        
+        # Sample file download
+        import os
+        sample_path = os.path.join(os.path.dirname(__file__), 'fraudTest.csv')
+        try:
+            with open(sample_path, 'rb') as f:
+                csv_sample = f.read()
+            st.download_button(
+                label="📥 Download Sample CSV",
+                data=csv_sample,
+                file_name="fraud_test_sample.csv",
+                mime="text/csv",
+                width="stretch"
+            )
+        except Exception as e:
+            st.error(f"Sample file not found: {str(e)}")
+        
         if uploaded_file is not None:
             st.session_state.df = pd.read_csv(uploaded_file)
     
@@ -405,8 +421,8 @@ with st.sidebar:
         # Quick access to popular datasets
         st.markdown("**Popular Datasets:**")
         popular_datasets = {
-            "Adult Census Income": "uciml/adult-census-income",
             "Credit Card Fraud Detection": "chetanmittal033/credit-card-fraud-data",
+            "Adult Census Income": "uciml/adult-census-income",
             "Remote Work Burnout and Social Isolation": "aryanmdev/remote-work-burnout-and-social-isolation-2026"
             # "Iris Flower Species": "uciml/iris"
         }
