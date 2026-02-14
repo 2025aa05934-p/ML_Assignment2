@@ -419,7 +419,7 @@ with st.sidebar:
         dataset_id = popular_datasets[selected_dataset]
         
         # Load button for Kaggle dataset
-        if st.button("📥 Load Kaggle Dataset", use_container_width=True):
+        if st.button("📥 Load Kaggle Dataset", width="stretch"):
             if kagglehub is None:
                 st.error("❌ kagglehub is not installed. Run: `pip install kagglehub`")
             else:
@@ -464,7 +464,7 @@ with st.sidebar:
         st.markdown("---")
         
         # Train button
-        st.session_state.train_button = st.button("🚀 Train & Evaluate", use_container_width=True)
+        st.session_state.train_button = st.button("🚀 Train & Evaluate", width="stretch")
     
     st.markdown("---")
     st.markdown("""
@@ -599,7 +599,7 @@ else:
     
     # Show dataset preview
     with st.expander("🔍 View Dataset Preview", expanded=False):
-        st.dataframe(st.session_state.df.head(10), use_container_width=True)
+        st.dataframe(st.session_state.df.head(10), width="stretch")
     
     # Training section
     if 'train_button' in st.session_state and st.session_state.train_button:
@@ -672,7 +672,7 @@ else:
                                 'F1 Score': '{:.4f}',
                                 'MCC Score': '{:.4f}'
                             }),
-                            use_container_width=True
+                            width="stretch"
                         )
                         
                         # Best model highlight
@@ -815,7 +815,7 @@ else:
                             st.dataframe(
                                 report_df.style.background_gradient(cmap='Blues', subset=['precision', 'recall', 'f1-score'])
                                 .format('{:.3f}'),
-                                use_container_width=True
+                                width="stretch"
                             )
                         
                         with col_bits2:
