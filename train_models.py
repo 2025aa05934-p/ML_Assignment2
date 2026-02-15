@@ -9,6 +9,8 @@ and their evaluation metrics calculation.
 
 import pandas as pd
 import numpy as np
+import joblib
+import os
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 from sklearn.metrics import (
@@ -24,6 +26,9 @@ from sklearn.neighbors import KNeighborsClassifier
 from sklearn.naive_bayes import GaussianNB
 from sklearn.ensemble import RandomForestClassifier
 from xgboost import XGBClassifier
+import kagglehub
+from kagglehub import KaggleDatasetAdapter
+import glob
 
 import warnings
 warnings.filterwarnings('ignore')
@@ -284,49 +289,82 @@ class MLClassificationPipeline:
             best_score
         )
 
+    def save_pipeline(self, filename='trained_models.joblib', encoders=None):
+        """Save the trained models, encoders, and evaluation metrics."""
+        data = {
+            'models': {name: result['model'] for name, result in self.results.items()},
+            'encoders': encoders,
+            'metrics': {name: result['metrics'] for name, result in self.results.items()}
+        }
+        joblib.dump(data, filename)
+        print(f"Models and encoders saved to {filename}")
+
 
 # Example usage
 if __name__ == "__main__":
     """
-    Example usage of the MLClassificationPipeline class.
-    Replace this with your actual dataset.
+    Train and save models for Credit Card Fraud Detection.
     """
     
-    print("ML Classification Pipeline - Example Usage")
-    print("="*60)
-    print("\nThis is a template script demonstrating the pipeline.")
-    print("Replace the example data with your actual dataset.")
-    print("\nSteps to use:")
-    print("1. Load your dataset using pandas")
-    print("2. Initialize the pipeline")
-    print("3. Preprocess the data")
-    print("4. Train and evaluate models")
-    print("5. Generate comparison table")
+    print("ML Classification Pipeline - Training & Saving")
     print("="*60)
     
-    # Example with synthetic data (replace with your dataset)
-    """
-    # Load your dataset
-    df = pd.read_csv('your_dataset.csv')
+    # Kaggle dataset identifier
+    kaggle_id = "chetanmittal033/credit-card-fraud-data"
+    file_to_load = "fraudTest.csv"
     
-    # Initialize pipeline
-    pipeline = MLClassificationPipeline(test_size=0.2, random_state=42)
-    
-    # Preprocess data
-    X_train, X_test, y_train, y_test, encoders = pipeline.preprocess_data(
-        df, target_column='target'
-    )
-    
-    # Train and evaluate all models
-    results = pipeline.train_and_evaluate(X_train, X_test, y_train, y_test)
-    
-    # Generate comparison table
-    comparison_df = pipeline.generate_comparison_table()
-    print("\nModel Comparison Table:")
-    print(comparison_df)
-    
-    # Get best model
-    best_name, best_model, best_score = pipeline.get_best_model('accuracy')
-    print(f"\nBest Model: {best_name}")
-    print(f"Best Accuracy: {best_score:.4f}")
-    """
+    print(f"Loading dataset {file_to_load} from {kaggle_id}...")
+    try:
+        # Load the latest version using the adapter pattern suggested by user
+        df = kagglehub.load_dataset(
+            KaggleDatasetAdapter.PANDAS,
+            kaggle_id,
+            file_to_load,
+        )
+        print(f"Successfully loaded {file_to_load} ({len(df)} rows)")
+    except Exception as e:
+        print(f"Error loading via adapter: {e}")
+        # Fallback to standard download if adapter fails
+        try:
+            download_path = kagglehub.dataset_download(kaggle_id)
+            target_path = os.path.join(download_path, file_to_load)
+            df = pd.read_csv(target_path)
+            print(f"Successfully loaded {file_to_load} via download fallback ({len(df)} rows)")
+        except Exception as e2:
+            print(f"Fallback error: {e2}")
+            df = None
+        
+    if df is not None:
+        # Limit rows for faster processing if the dataset is very large
+        # The user previously asked for 12000
+        if len(df) > 12000:
+            print("Truncating training dataset to 12,000 rows as requested...")
+            df = df.head(12000)
+        
+        # Drop columns that are likely not useful
+        cols_to_drop = ['sn', 'trans_date_trans_time', 'cc_num', 'first', 'last', 'street', 'city', 'state', 'zip', 'dob', 'trans_num', 'unix_time']
+        df_clean = df.drop(columns=[c for c in cols_to_drop if c in df.columns])
+        
+        # Initialize pipeline
+        pipeline = MLClassificationPipeline(test_size=0.2, random_state=42)
+        
+        # Preprocess data
+        print("Preprocessing data...")
+        # Assume the last column is the target if 'is_fraud' is not found, 
+        # but in fraudTest.csv it is 'is_fraud'
+        target_col = 'is_fraud' if 'is_fraud' in df_clean.columns else df_clean.columns[-1]
+        X_train, X_test, y_train, y_test, encoders = pipeline.preprocess_data(
+            df_clean, target_column=target_col
+        )
+        
+        # Train and evaluate all models
+        print("Training models...")
+        results = pipeline.train_and_evaluate(X_train, X_test, y_train, y_test)
+        
+        # Save models and encoders
+        pipeline.save_pipeline('trained_models.joblib', encoders=encoders)
+        
+        # Generate comparison table
+        comparison_df = pipeline.generate_comparison_table()
+        print("\nModel Comparison Table:")
+        print(comparison_df)

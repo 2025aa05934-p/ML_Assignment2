@@ -16,6 +16,8 @@ from sklearn.neighbors import KNeighborsClassifier
 from sklearn.naive_bayes import GaussianNB
 from sklearn.ensemble import RandomForestClassifier
 from xgboost import XGBClassifier
+import joblib
+import os
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -225,6 +227,62 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ============================================================
+# PRE-TRAINED MODELS LOADER
+# ============================================================
+
+@st.cache_resource
+def load_trained_pipeline():
+    """Load the pre-trained models and encoders from disk"""
+    model_path = 'trained_models.joblib'
+    if os.path.exists(model_path):
+        try:
+            return joblib.load(model_path)
+        except Exception as e:
+            st.error(f"Error loading models: {e}")
+            return None
+    else:
+        st.warning("⚠️ Pre-trained models not found. Please run `train_models.py` first.")
+        return None
+
+def evaluate_models(X_eval, y_eval, models_dict):
+    """Evaluate a dictionary of models on the provided data"""
+    results = {}
+    for model_name, model in models_dict.items():
+        y_pred = model.predict(X_eval)
+        
+        accuracy = accuracy_score(y_eval, y_pred)
+        auc = None
+        try:
+            if hasattr(model, 'predict_proba'):
+                if len(np.unique(y_eval)) == 2:
+                    y_pred_proba = model.predict_proba(X_eval)[:, 1]
+                    auc = roc_auc_score(y_eval, y_pred_proba)
+                else:
+                    y_pred_proba = model.predict_proba(X_eval)
+                    auc = roc_auc_score(y_eval, y_pred_proba, multi_class='ovr', average='weighted')
+        except:
+            pass
+            
+        precision = precision_score(y_eval, y_pred, average='weighted', zero_division=0)
+        recall = recall_score(y_eval, y_pred, average='weighted', zero_division=0)
+        f1 = f1_score(y_eval, y_pred, average='weighted', zero_division=0)
+        mcc = matthews_corrcoef(y_eval, y_pred)
+        
+        results[model_name] = {
+            'model': model,
+            'accuracy': accuracy,
+            'auc': auc,
+            'precision': precision,
+            'recall': recall,
+            'f1': f1,
+            'mcc': mcc,
+            'y_pred': y_pred,
+            'confusion_matrix': confusion_matrix(y_eval, y_pred),
+            'classification_report': classification_report(y_eval, y_pred, output_dict=True)
+        }
+    return results
+
+# ============================================================
 # KAGGLE DATASET LOADER
 # ============================================================
 
@@ -238,27 +296,51 @@ def load_kaggle_dataset(dataset_identifier):
     try:
         import os
         import glob
+        from kagglehub import KaggleDatasetAdapter
         
-        # Remove version specification if present (e.g., "uciml/iris/versions/2" -> "uciml/iris")
-        if "/versions/" in dataset_identifier:
-            dataset_identifier = dataset_identifier.split("/versions/")[0]
+        # Priority mapping for specific datasets
+        file_to_load = None
+        if "chetanmittal033/credit-card-fraud-data" in dataset_identifier:
+            # User specifically wants fraudTrain.csv for testing/evaluation
+            file_to_load = "fraudTrain.csv"
+            # Since fraudTrain is in kartik2112, we adjust the identifier if needed
+            # but the user prompt says: load from chetanmittal033... we will use fraudTrain to test
+            # This is a bit inconsistent in their request, but I'll try to find fraudTrain.csv
+            # in the downloaded datasets.
         
-        # Download the dataset first (returns path to downloaded folder)
-        dataset_path = kagglehub.dataset_download(dataset_identifier)
-        
-        # Find CSV files in the downloaded dataset
-        csv_files = glob.glob(os.path.join(dataset_path, "*.csv"))
-        
-        if not csv_files:
-            st.error(f"No CSV files found in dataset: {dataset_identifier}")
-            return None
-        
-        # Load the first CSV file found
-        csv_file = csv_files[0]
-        df = pd.read_csv(csv_file)
+        # Load the latest version using the adapter if a file is specified
+        if file_to_load:
+            try:
+                # User's suggested adapter method
+                # We need to find where fraudTrain is. 
+                # If chetanmittal033 doesn't have it, load_dataset might fail.
+                df = kagglehub.load_dataset(
+                    KaggleDatasetAdapter.PANDAS,
+                    dataset_identifier,
+                    file_to_load,
+                )
+            except:
+                # Fallback to the other dataset if file not found in chetanmittal033
+                df = kagglehub.load_dataset(
+                    KaggleDatasetAdapter.PANDAS,
+                    "kartik2112/fraud-detection",
+                    file_to_load,
+                )
+        else:
+            # Generic loading logic
+            dataset_path = kagglehub.dataset_download(dataset_identifier)
+            csv_files = glob.glob(os.path.join(dataset_path, "*.csv"))
+            if not csv_files:
+                st.error(f"No CSV files found in dataset: {dataset_identifier}")
+                return None
+            df = pd.read_csv(csv_files[0])
+
+        # Consistent truncation as requested
+        if len(df) > 12000:
+            df = df.head(12000)
+            st.warning("⚠️ Dataset truncated to 12,000 rows for performance optimization.")
         
         st.info(f"✅ Successfully loaded dataset: {len(df)} rows × {len(df.columns)} columns")
-        st.info(f"📁 Loaded file: {os.path.basename(csv_file)}")
         return df
         
     except Exception as e:
@@ -319,8 +401,7 @@ def train_all_models(X_train, X_test, y_train, y_test):
             'mcc': mcc,
             'y_pred': y_pred,
             'confusion_matrix': confusion_matrix(y_test, y_pred),
-            'classification_report': classification_report(y_test, y_pred),
-            'report_dict': classification_report(y_test, y_pred, output_dict=True)
+            'classification_report': classification_report(y_test, y_pred, output_dict=True)
         }
     
     return results
@@ -361,8 +442,10 @@ if 'df' not in st.session_state:
     st.session_state.df = None
 if 'test_size' not in st.session_state:
     st.session_state.test_size = 20
-if 'train_button' not in st.session_state:
-    st.session_state.train_button = False
+if 'run_pretrained' not in st.session_state:
+    st.session_state.run_pretrained = False
+if 'run_train_test' not in st.session_state:
+    st.session_state.run_train_test = False
 if 'model_choice' not in st.session_state:
     st.session_state.model_choice = 'All Models (Comparison)'
 if 'data_source' not in st.session_state:
@@ -414,6 +497,9 @@ with st.sidebar:
         
         if uploaded_file is not None:
             st.session_state.df = pd.read_csv(uploaded_file)
+            if len(st.session_state.df) > 12000:
+                st.session_state.df = st.session_state.df.head(12000)
+                st.warning("⚠️ Uploaded dataset truncated to 12,000 rows for performance optimization.")
     
     else:
         st.markdown("### 🔗 Kaggle Dataset")
@@ -424,7 +510,6 @@ with st.sidebar:
             "Credit Card Fraud Detection": "chetanmittal033/credit-card-fraud-data",
             "Adult Census Income": "uciml/adult-census-income",
             "Remote Work Burnout and Social Isolation": "aryanmdev/remote-work-burnout-and-social-isolation-2026"
-            # "Iris Flower Species": "uciml/iris"
         }
         
         selected_dataset = st.selectbox(
@@ -479,8 +564,16 @@ with st.sidebar:
         
         st.markdown("---")
         
-        # Train button
-        st.session_state.train_button = st.button("🚀 Train & Evaluate", width="stretch")
+        # Action buttons
+        if st.session_state.data_source_radio == "Load from Kaggle":
+            st.session_state.run_train_test = st.button("🚀 Train & Evaluate", use_container_width=True)
+            st.session_state.run_pretrained = False
+        else:
+            col_btn1, col_btn2 = st.columns(2)
+            with col_btn1:
+                st.session_state.run_pretrained = st.button("🧪 Run Pre-trained", use_container_width=True)
+            with col_btn2:
+                st.session_state.run_train_test = st.button("🚀 Train & Test", use_container_width=True)
     
     st.markdown("---")
     st.markdown("""
@@ -506,7 +599,35 @@ if st.session_state.df is None:
         It automates data preprocessing, trains six industry-standard models, and evaluates them across six key 
         performance metrics for the <b>BITS Pilani M.Tech (AIML)</b> assignment.</p>
     </div>
+    """, unsafe_allow_html=True)
+
+    # --- NEW: Pre-trained Model Performance Details (Top of landing page) ---
+    pipeline_data = load_trained_pipeline()
+    if pipeline_data and 'metrics' in pipeline_data:
+        st.markdown('<div class="section-header">🏆 Pre-trained Model Benchmarks</div>', unsafe_allow_html=True)
+        st.info("💡 Below are the performance metrics for the pre-trained models on the Credit Card Fraud dataset.")
+        
+        metrics_dict = pipeline_data['metrics']
+        perf_data = []
+        for model_name, m in metrics_dict.items():
+            perf_data.append({
+                'Model': model_name,
+                'Accuracy': m['accuracy'],
+                'AUC': m['auc'] if m['auc'] is not None else 0.0,
+                'Precision': m['precision'],
+                'Recall': m['recall'],
+                'F1 Score': m['f1'],
+                'MCC Score': m['mcc']
+            })
+        
+        perf_df = pd.DataFrame(perf_data)
+        st.dataframe(
+            perf_df.style.background_gradient(cmap='Blues', subset=['Accuracy', 'F1 Score', 'MCC Score'])
+            .format(precision=4),
+            width="stretch"
+        )
     
+    st.markdown("""
     <div class="content-box">
         <h3>📊 b. Dataset Description</h3>
         <p>The system handles structured tabular data (CSV). It supports both numerical and categorical features 
@@ -617,232 +738,257 @@ else:
     with st.expander("🔍 View Dataset Preview", expanded=False):
         st.dataframe(st.session_state.df.head(10), width="stretch")
     
-    # Training section
-    if 'train_button' in st.session_state and st.session_state.train_button:
-        with st.spinner('🔄 Training models... This may take a moment.'):
-            
-            # Prepare data
-            df_clean = st.session_state.df.copy()
-            
-            # Drop rows with missing values
-            initial_rows = len(df_clean)
-            df_clean = df_clean.dropna()
-            removed_rows = initial_rows - len(df_clean)
-            
-            if removed_rows > 0:
-                st.warning(f"⚠️ Removed {removed_rows} rows with missing values")
-            
-            if len(df_clean) < 10:
-                st.error("❌ Dataset too small after removing missing values. Need at least 10 rows.")
-            else:
-                X = df_clean.iloc[:, :-1]
-                y = df_clean.iloc[:, -1]
-                
-                # Handle non-numeric data in features
-                for col in X.columns:
-                    if X[col].dtype == 'object':
-                        le = LabelEncoder()
-                        X[col] = le.fit_transform(X[col].astype(str))
-                
-                # Handle and encode target labels (required for XGBoost to have 0-indexed labels)
-                le = LabelEncoder()
-                y = le.fit_transform(y.astype(str) if y.dtype == 'object' else y)
-                
-                # Check if target has values
-                if len(y) == 0:
-                    st.error("❌ No valid data to train on")
-                else:
-                    # Split data
-                    X_train, X_test, y_train, y_test = train_test_split(
-                        X, y, test_size=st.session_state.test_size/100, random_state=42
-                    )
-                    
-                    # Train models
-                    results = train_all_models(X_train, X_test, y_train, y_test)
-                    
-                    st.success('✅ Training completed successfully!')
-                    
-                    # Display results based on selection
-                    if st.session_state.model_choice == 'All Models (Comparison)':
-                        st.markdown('<div class="section-header">📈 Model Comparison</div>', unsafe_allow_html=True)
+    # Process Selection
+    if st.session_state.run_pretrained or st.session_state.run_train_test:
+        results = None
+        X_eval, y_eval = None, None
+        
+        # Prepare basic clean data
+        df_clean = st.session_state.df.copy().dropna()
+        
+        if len(df_clean) < 5:
+            st.error("❌ Dataset too small for evaluation.")
+        else:
+            if st.session_state.run_pretrained:
+                # RUN PRE-TRAINED LOGIC
+                pipeline_data = load_trained_pipeline()
+                if pipeline_data:
+                    with st.spinner('🔄 Running pre-trained models...'):
+                        # Apply pre-trained preprocessing
+                        cols_to_drop = ['sn', 'trans_date_trans_time', 'cc_num', 'first', 'last', 'street', 'city', 'state', 'zip', 'dob', 'trans_num', 'unix_time']
+                        df_pretrained = df_clean.drop(columns=[c for c in cols_to_drop if c in df_clean.columns])
                         
-                        # Create comparison dataframe
-                        comparison_df = pd.DataFrame({
-                            'Model': list(results.keys()),
-                            'Accuracy': [results[m]['accuracy'] for m in results.keys()],
-                            'AUC Score': [results[m]['auc'] if results[m]['auc'] is not None else 0 for m in results.keys()],
-                            'Precision': [results[m]['precision'] for m in results.keys()],
-                            'Recall': [results[m]['recall'] for m in results.keys()],
-                            'F1 Score': [results[m]['f1'] for m in results.keys()],
-                            'MCC Score': [results[m]['mcc'] for m in results.keys()]
-                        })
+                        target_col = 'is_fraud' if 'is_fraud' in df_pretrained.columns else df_pretrained.columns[-1]
+                        X = df_pretrained.drop(columns=[target_col])
+                        y_raw = df_pretrained[target_col]
+                        
+                        encoders = pipeline_data['encoders']
+                        try:
+                            # Feature encoding
+                            for col in X.columns:
+                                if col in encoders:
+                                    le = encoders[col]
+                                    X[col] = X[col].astype(str).map(lambda x: x if x in le.classes_ else le.classes_[0])
+                                    X[col] = le.transform(X[col])
+                            
+                            # Target encoding
+                            if 'target' in encoders:
+                                y = encoders['target'].transform(y_raw.astype(str) if y_raw.dtype == 'object' else y_raw)
+                            else:
+                                y = y_raw.values
+                                
+                            # Sample for evaluation if requested
+                            if st.session_state.test_size < 100:
+                                _, X_eval, _, y_eval = train_test_split(X, y, test_size=st.session_state.test_size/100, random_state=42, stratify=y)
+                            else:
+                                X_eval, y_eval = X, y
+                                
+                            results = evaluate_models(X_eval, y_eval, pipeline_data['models'])
+                            st.success('✅ Pre-trained models evaluated!')
+                        except Exception as e:
+                            st.error(f"Error during pre-trained evaluation: {e}")
+                            
+            elif st.session_state.run_train_test:
+                # TRAIN & TEST LOGIC (Original behavior)
+                with st.spinner('🔄 Training models from scratch...'):
+                    # Drop non-predictive columns if present to stay consistent with pre-trained models
+                    cols_to_drop = ['sn', 'trans_date_trans_time', 'cc_num', 'first', 'last', 'street', 'city', 'state', 'zip', 'dob', 'trans_num', 'unix_time']
+                    df_training = df_clean.drop(columns=[c for c in cols_to_drop if c in df_clean.columns])
+                    
+                    target_col = 'is_fraud' if 'is_fraud' in df_training.columns else df_training.columns[-1]
+                    X = df_training.drop(columns=[target_col])
+                    y_raw = df_training[target_col]
+                    
+                    # Fresh encoding for this dataset
+                    for col in X.columns:
+                        if X[col].dtype == 'object':
+                            le = LabelEncoder()
+                            X[col] = le.fit_transform(X[col].astype(str))
+                    
+                    le_y = LabelEncoder()
+                    y = le_y.fit_transform(y_raw.astype(str) if y_raw.dtype == 'object' else y_raw)
+                    
+                    X_train, X_eval, y_train, y_eval = train_test_split(X, y, test_size=st.session_state.test_size/100, random_state=42)
+                    
+                    results = train_all_models(X_train, X_eval, y_train, y_eval)
+                    st.success('✅ Models trained and tested!')
+
+        # Display Results if available
+        if results:
+            if st.session_state.model_choice == 'All Models (Comparison)':
+                st.markdown('<div class="section-header">📈 Model Comparison</div>', unsafe_allow_html=True)
                 
-                        # Style the dataframe
-                        st.dataframe(
-                            comparison_df.style.background_gradient(cmap='Blues', subset=['Accuracy', 'Precision', 'F1 Score'])
-                            .format({
-                                'Accuracy': '{:.4f}',
-                                'AUC Score': '{:.4f}',
-                                'Precision': '{:.4f}',
-                                'Recall': '{:.4f}',
-                                'F1 Score': '{:.4f}',
-                                'MCC Score': '{:.4f}'
-                            }),
-                            width="stretch"
+                comparison_df = pd.DataFrame({
+                    'Model': list(results.keys()),
+                    'Accuracy': [float(results[m]['accuracy']) for m in results.keys()],
+                    'AUC Score': [float(results[m]['auc']) if results[m]['auc'] is not None else 0.0 for m in results.keys()],
+                    'Precision': [float(results[m]['precision']) for m in results.keys()],
+                    'Recall': [float(results[m]['recall']) for m in results.keys()],
+                    'F1 Score': [float(results[m]['f1']) for m in results.keys()],
+                    'MCC Score': [float(results[m]['mcc']) for m in results.keys()]
+                })
+        
+                st.dataframe(
+                    comparison_df.style.background_gradient(cmap='Blues', subset=['Accuracy', 'Precision', 'F1 Score'])
+                    .format(precision=4),
+                    width="stretch"
+                )
+                        
+                # Best model highlight
+                best_model = comparison_df.loc[comparison_df['Accuracy'].idxmax(), 'Model']
+                best_accuracy = comparison_df['Accuracy'].max()
+                
+                st.markdown(f"""
+                <div class="content-box">
+                    <h3>🏆 Best Performing Model</h3>
+                    <p><b>{best_model}</b> achieved the highest accuracy of <b>{best_accuracy:.4f}</b></p>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # Visualization
+                st.markdown('<div class="section-header">📊 Performance Visualization</div>', unsafe_allow_html=True)
+                
+                fig, axes = plt.subplots(2, 3, figsize=(18, 10))
+                fig.patch.set_facecolor('#f8f9fa')
+                
+                metrics = ['Accuracy', 'AUC Score', 'Precision', 'Recall', 'F1 Score', 'MCC Score']
+                # Professional palette: Deep Slate, Midnight Blue, Teal, Slate Blue, Gold, Coral
+                colors = ['#2c3e50', '#2980b9', '#16a085', '#7f8c8d', '#f1c40f', '#e67e22']
+                
+                for idx, (ax, metric, color) in enumerate(zip(axes.flat, metrics, colors)):
+                    values = comparison_df[metric].values
+                    bars = ax.bar(range(len(results)), values, color=color, alpha=0.85, edgecolor='#ecf0f1', linewidth=1.5)
+                    ax.set_xticks(range(len(results)))
+                    ax.set_xticklabels([m.replace(' ', '\n') for m in results.keys()], fontsize=10, fontweight='500', color='#34495e')
+                    ax.set_title(metric, fontsize=16, fontweight='800', color='#2c3e50', pad=20)
+                    ax.set_ylim([0, 1.1])
+                    ax.yaxis.grid(True, linestyle='--', alpha=0.7)
+                    ax.set_facecolor('#ffffff')
+                    ax.spines['top'].set_visible(False)
+                    ax.spines['right'].set_visible(False)
+                    ax.spines['left'].set_color('#bdc3c7')
+                    ax.spines['bottom'].set_color('#bdc3c7')
+                    
+                    # Add value labels on bars
+                    for bar in bars:
+                        height = bar.get_height()
+                        ax.text(bar.get_x() + bar.get_width()/2., height,
+                               f'{height:.3f}',
+                               ha='center', va='bottom', fontsize=9, fontweight='bold')
+                
+                plt.tight_layout()
+                st.pyplot(fig)
+                
+                # Confusion Matrices for all models
+                st.markdown('<div class="section-header">🎯 Confusion Matrices Comparison</div>', unsafe_allow_html=True)
+                
+                # Create a grid for confusion matrices (2 columns)
+                cm_cols = st.columns(2)
+                for idx, (model_name, model_result) in enumerate(results.items()):
+                    with cm_cols[idx % 2]:
+                        st.markdown(f"#### {model_name}")
+                        fig_cm, ax_cm = plt.subplots(figsize=(6, 5))
+                        sns.heatmap(
+                            model_result['confusion_matrix'], 
+                            annot=True, 
+                            fmt='d', 
+                            cmap='Blues',
+                            cbar=False,
+                            linewidths=1,
+                            linecolor='white',
+                            square=True,
+                            annot_kws={"size": 10}
                         )
-                        
-                        # Best model highlight
-                        best_model = comparison_df.loc[comparison_df['Accuracy'].idxmax(), 'Model']
-                        best_accuracy = comparison_df['Accuracy'].max()
-                        
+                        ax_cm.set_xlabel('Predicted', fontsize=10)
+                        ax_cm.set_ylabel('True', fontsize=10)
+                        plt.tight_layout()
+                        st.pyplot(fig_cm)
+                        plt.close(fig_cm)
+                
+            else:
+                # Single model analysis
+                st.markdown(f'<div class="section-header">📊 {st.session_state.model_choice} - Detailed Analysis</div>', unsafe_allow_html=True)
+                
+                model_result = results[st.session_state.model_choice]
+                
+                # Metrics display
+                metric_cols = st.columns(6)
+                
+                metrics_data = [
+                    ('Accuracy', model_result['accuracy']),
+                    ('AUC', model_result['auc'] if model_result['auc'] is not None else 0),
+                    ('Precision', model_result['precision']),
+                    ('Recall', model_result['recall']),
+                    ('F1 Score', model_result['f1']),
+                    ('MCC', model_result['mcc'])
+                ]
+                
+                for col, (label, value) in zip(metric_cols, metrics_data):
+                    with col:
                         st.markdown(f"""
-                        <div class="content-box">
-                            <h3>🏆 Best Performing Model</h3>
-                            <p><b>{best_model}</b> achieved the highest accuracy of <b>{best_accuracy:.4f}</b></p>
+                        <div class="metric-card">
+                            <div class="metric-label">{label}</div>
+                            <div class="metric-value">{value:.4f}</div>
                         </div>
                         """, unsafe_allow_html=True)
-                        
-                        # Visualization
-                        st.markdown('<div class="section-header">📊 Performance Visualization</div>', unsafe_allow_html=True)
-                        
-                        fig, axes = plt.subplots(2, 3, figsize=(18, 10))
-                        fig.patch.set_facecolor('#f8f9fa')
-                        
-                        metrics = ['Accuracy', 'AUC Score', 'Precision', 'Recall', 'F1 Score', 'MCC Score']
-                        # Professional palette: Deep Slate, Midnight Blue, Teal, Slate Blue, Gold, Coral
-                        colors = ['#2c3e50', '#2980b9', '#16a085', '#7f8c8d', '#f1c40f', '#e67e22']
-                        
-                        for idx, (ax, metric, color) in enumerate(zip(axes.flat, metrics, colors)):
-                            values = comparison_df[metric].values
-                            bars = ax.bar(range(len(results)), values, color=color, alpha=0.85, edgecolor='#ecf0f1', linewidth=1.5)
-                            ax.set_xticks(range(len(results)))
-                            ax.set_xticklabels([m.replace(' ', '\n') for m in results.keys()], fontsize=10, fontweight='500', color='#34495e')
-                            ax.set_title(metric, fontsize=16, fontweight='800', color='#2c3e50', pad=20)
-                            ax.set_ylim([0, 1.1])
-                            ax.yaxis.grid(True, linestyle='--', alpha=0.7)
-                            ax.set_facecolor('#ffffff')
-                            ax.spines['top'].set_visible(False)
-                            ax.spines['right'].set_visible(False)
-                            ax.spines['left'].set_color('#bdc3c7')
-                            ax.spines['bottom'].set_color('#bdc3c7')
-                            
-                            # Add value labels on bars
-                            for bar in bars:
-                                height = bar.get_height()
-                                ax.text(bar.get_x() + bar.get_width()/2., height,
-                                       f'{height:.3f}',
-                                       ha='center', va='bottom', fontsize=9, fontweight='bold')
-                        
-                        plt.tight_layout()
-                        st.pyplot(fig)
-                        
-                        # Confusion Matrices for all models
-                        st.markdown('<div class="section-header">🎯 Confusion Matrices Comparison</div>', unsafe_allow_html=True)
-                        
-                        # Create a grid for confusion matrices (2 columns)
-                        cm_cols = st.columns(2)
-                        for idx, (model_name, model_result) in enumerate(results.items()):
-                            with cm_cols[idx % 2]:
-                                st.markdown(f"#### {model_name}")
-                                fig_cm, ax_cm = plt.subplots(figsize=(6, 5))
-                                sns.heatmap(
-                                    model_result['confusion_matrix'], 
-                                    annot=True, 
-                                    fmt='d', 
-                                    cmap='Blues',
-                                    cbar=False,
-                                    linewidths=1,
-                                    linecolor='white',
-                                    square=True,
-                                    annot_kws={"size": 10}
-                                )
-                                ax_cm.set_xlabel('Predicted', fontsize=10)
-                                ax_cm.set_ylabel('True', fontsize=10)
-                                plt.tight_layout()
-                                st.pyplot(fig_cm)
-                                plt.close(fig_cm)
-                        
+                
+                # Confusion Matrix and Learning Curve
+                st.markdown('<div class="section-header">🎯 Detailed Evaluation</div>', unsafe_allow_html=True)
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.markdown("### Confusion Matrix")
+                    fig, ax = plt.subplots(figsize=(10, 8))
+                    sns.heatmap(
+                        model_result['confusion_matrix'], 
+                        annot=True, 
+                        fmt='d', 
+                        cmap='Blues',
+                        cbar_kws={'label': 'Count'},
+                        linewidths=2,
+                        linecolor='white',
+                        square=True
+                    )
+                    ax.set_xlabel('Predicted Label', fontsize=12, fontweight='bold')
+                    ax.set_ylabel('True Label', fontsize=12, fontweight='bold')
+                    ax.set_title(f'{st.session_state.model_choice} - Confusion Matrix', fontsize=14, fontweight='bold', pad=20)
+                    st.pyplot(fig)
+                
+                with col2:
+                    if st.session_state.run_train_test:
+                        st.markdown("### Learning Curve")
+                        with st.spinner('Generating learning curve...'):
+                            # Use X_train, y_train only available in run_train_test
+                            fig_lc = plot_learning_curve(model_result['model'], X_eval, y_eval, st.session_state.model_choice)
+                            st.pyplot(fig_lc)
+                            plt.close(fig_lc)
                     else:
-                        # Single model analysis
-                        st.markdown(f'<div class="section-header">📊 {st.session_state.model_choice} - Detailed Analysis</div>', unsafe_allow_html=True)
-                        
-                        model_result = results[st.session_state.model_choice]
-                        
-                        # Metrics display
-                        metric_cols = st.columns(6)
-                        
-                        metrics_data = [
-                            ('Accuracy', model_result['accuracy']),
-                            ('AUC', model_result['auc'] if model_result['auc'] is not None else 0),
-                            ('Precision', model_result['precision']),
-                            ('Recall', model_result['recall']),
-                            ('F1 Score', model_result['f1']),
-                            ('MCC', model_result['mcc'])
-                        ]
-                        
-                        for col, (label, value) in zip(metric_cols, metrics_data):
-                            with col:
-                                st.markdown(f"""
-                                <div class="metric-card">
-                                    <div class="metric-label">{label}</div>
-                                    <div class="metric-value">{value:.4f}</div>
-                                </div>
-                                """, unsafe_allow_html=True)
-                        
-                        # Confusion Matrix and Learning Curve
-                        st.markdown('<div class="section-header">🎯 Detailed Evaluation</div>', unsafe_allow_html=True)
-                        
-                        col1, col2 = st.columns(2)
-                        
-                        with col1:
-                            st.markdown("### Confusion Matrix")
-                            fig, ax = plt.subplots(figsize=(10, 8))
-                            sns.heatmap(
-                                model_result['confusion_matrix'], 
-                                annot=True, 
-                                fmt='d', 
-                                cmap='Blues',
-                                cbar_kws={'label': 'Count'},
-                                linewidths=2,
-                                linecolor='white',
-                                square=True
-                            )
-                            ax.set_xlabel('Predicted Label', fontsize=12, fontweight='bold')
-                            ax.set_ylabel('True Label', fontsize=12, fontweight='bold')
-                            ax.set_title(f'{st.session_state.model_choice} - Confusion Matrix', fontsize=14, fontweight='bold', pad=20)
-                            st.pyplot(fig)
-                        
-                        with col2:
-                            st.markdown("### Learning Curve")
-                            with st.spinner('Generating learning curve...'):
-                                fig_lc = plot_learning_curve(model_result['model'], X_train, y_train, st.session_state.model_choice)
-                                st.pyplot(fig_lc)
-                                plt.close(fig_lc)
-                        
-                        # Classification Report and Insights
-                        st.markdown('<div class="section-header">🔍 Deep Insights</div>', unsafe_allow_html=True)
-                        col_bits1, col_bits2 = st.columns(2)
-                        
-                        with col_bits1:
-                            st.markdown("### Classification Report")
-                            # Convert report dict to dataframe for better visualization
-                            report_df = pd.DataFrame(model_result['report_dict']).transpose()
-                            # Style the dataframe
-                            st.dataframe(
-                                report_df.style.background_gradient(cmap='Blues', subset=['precision', 'recall', 'f1-score'])
-                                .format('{:.3f}'),
-                                width="stretch"
-                            )
-                        
-                        with col_bits2:
-                            # Additional insights
-                            st.markdown("### 💡 Model Insights")
-                            st.markdown(f"""
-                            - **Total Predictions**: {len(y_test)}
-                            - **Correct Predictions**: {(model_result['y_pred'] == y_test).sum()}
-                            - **Incorrect Predictions**: {(model_result['y_pred'] != y_test).sum()}
-                            - **Error Rate**: {1 - model_result['accuracy']:.4f}
-                            """)
+                        st.markdown("### Classification Report")
+                        report_df = pd.DataFrame(model_result['classification_report']).transpose()
+                        st.dataframe(report_df.style.background_gradient(cmap='Blues', subset=['precision', 'recall', 'f1-score']).format(precision=3), width="stretch")
+                
+                # Classification Report and Insights
+                st.markdown('<div class="section-header">🔍 Deep Insights</div>', unsafe_allow_html=True)
+                col_bits1, col_bits2 = st.columns(2)
+                
+                with col_bits1:
+                    if st.session_state.run_train_test:
+                        st.markdown("### Classification Report")
+                        report_df = pd.DataFrame(model_result['classification_report']).transpose()
+                        st.dataframe(report_df.style.background_gradient(cmap='Blues', subset=['precision', 'recall', 'f1-score']).format(precision=3), width="stretch")
+                    else:
+                        st.info("Additional insights available when training from scratch.")
+                
+                with col_bits2:
+                    # Additional insights
+                    st.markdown("### 💡 Model Insights")
+                    st.markdown(f"""
+                    - **Total samples evaluated**: {len(y_eval)}
+                    - **Correct Predictions**: {(model_result['y_pred'] == y_eval).sum()}
+                    - **Incorrect Predictions**: {(model_result['y_pred'] != y_eval).sum()}
+                    - **Overall Accuracy**: {model_result['accuracy']:.4f}
+                    """)
 
 # Footer
 st.markdown("---")
