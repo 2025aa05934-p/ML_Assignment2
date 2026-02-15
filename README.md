@@ -59,7 +59,15 @@ Detailed performance observations for each model in the suite:
 | **Naive Bayes** | Highly efficient probabilistic model based on feature independence. Performs exceptionally well on categorical data even with smaller sample sizes. |
 | **Random Forest** | An ensemble of decision trees that reduces variance through bagging. Consistently high accuracy and robust against noise and outliers. |
 | **XGBoost** | State-of-the-art gradient boosting implementation. Usually provides the highest accuracy through sequential correction of errors and L1/L2 regularization. |
+## 📊 Pre-trained Performance (Benchmark: Credit Card Fraud)
 
+The studio includes pre-trained benchmarks automatically displayed on the landing page. These were generated via `train_models.py` using a truncated test split from the `chetanmittal033/credit-card-fraud-data` Kaggle repository.
+
+| ML Model Name | Accuracy | AUC Score | F1 Score | MCC Score |
+|---------------|----------|-----------|----------|-----------|
+| **XGBoost** | 0.9975 | 0.8918 | 0.9970 | 0.4354 |
+| **Random Forest** | 0.9971 | 0.9948 | 0.9967 | 0.3766 |
+| **Log. Regression** | 0.9967 | 0.8016 | 0.9954 | -0.0011 |
 ---
 
 ## 🚀 Key Features & Implementation Details
@@ -71,27 +79,37 @@ Detailed performance observations for each model in the suite:
 - ✅ **Visual Analytics**: Interactive confusion matrices and bar charts using `Seaborn` and `Matplotlib`.
 
 ### Technical Stack
-- **Framework**: Streamlit (Web UI)
-- **ML Libraries**: Scikit-Learn, XGBoost
-- **Data Handling**: Pandas, NumPy
-- **Environment**: Python 3.10+ (Optimized for macOS with `libomp` support)
+- **Framework**: Streamlit (Professional Academic Studio Style)
+- **Engine**: Scikit-Learn | XGBoost | Joblib
+- **Data Handling**: Pandas | NumPy | KaggleHub
+- **Environment**: Python 3.13+ (Optimized for macOS)
 
 ---
 
 ## 🛠️ Installation & Execution
 
-1. **Install Dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   ```
-2. **Setup XGBoost (Mac Users)**:
-   ```bash
-   brew install libomp
-   ```
-3. **Run Application**:
-   ```bash
-   streamlit run app.py
-   ```
+### 1. Unified Setup
+Ensure all dependencies are installed in your environment:
+```bash
+pip install -r requirements.txt
+```
+
+### 2. Prepare Pre-trained Weights (Optional but Recommended)
+The studio uses a professional offline training engine to prepare model weights before UI launch. This ensures instant performance for benchmark datasets:
+```bash
+python train_models.py
+```
+*This generates `trained_models.joblib` containing models, label encoders, and benchmark metrics.*
+
+### 3. Launch Inference Studio
+```bash
+streamlit run app.py
+```
+
+### 4. How to Use
+- **Scenario A (Pre-trained)**: Select "Upload CSV" or "Load from Kaggle", then click **🧪 Run Pre-trained** for instant inference results.
+- **Scenario B (On-the-fly)**: Click **🚀 Train & Evaluate** to train fresh models on a specific data sample (supports custom datasets).
+- **Optimization**: All datasets are automatically truncated to 12,000 rows to ensure optimal performance on consumer-grade machines.
 
 
 ---
