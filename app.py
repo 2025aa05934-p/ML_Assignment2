@@ -571,7 +571,7 @@ with st.sidebar:
         else:
             col_btn1, col_btn2 = st.columns(2)
             with col_btn1:
-                st.session_state.run_pretrained = st.button("🧪 Run Pre-trained", use_container_width=True)
+                st.session_state.run_pretrained = st.button("🧪 Test", use_container_width=True)
             with col_btn2:
                 st.session_state.run_train_test = st.button("🚀 Train & Test", use_container_width=True)
     
